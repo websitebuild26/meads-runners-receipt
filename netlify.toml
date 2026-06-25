@@ -2,6 +2,12 @@
   publish = "public"
   functions = "netlify/functions"
 
+[build.environment]
+  # STRAVA_CLIENT_ID is a public OAuth value (must live in the frontend to start
+  # login) — it is not a secret, so exclude it from Netlify's secrets scanner.
+  # The real secret, STRAVA_CLIENT_SECRET, is used only server-side and is not omitted.
+  SECRETS_SCAN_OMIT_KEYS = "STRAVA_CLIENT_ID"
+
 # Serve the SPA for the OAuth callback path
 [[redirects]]
   from = "/callback"
