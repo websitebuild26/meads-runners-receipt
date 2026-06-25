@@ -182,7 +182,7 @@ function renderReceipt(r) {
   const line = (k, v) => `<div class="r-line"><span class="k">${k}</span><span class="v">${v}</span></div>`;
 
   let html = "";
-  html += `<img src="/meads-logo.png" alt="Meads Runners" class="r-logo" onerror="this.style.display='none'" />`;
+  html += `<img src="/meads-logo.png" alt="Meads Runners" class="r-logo" />`;
   html += `<div class="r-title">MEADS RUNNERS</div>`;
   html += `<div class="r-sub">Official Run Receipt</div>`;
   html += `<hr class="r-divider" />`;

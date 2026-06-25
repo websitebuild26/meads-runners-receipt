@@ -17,7 +17,7 @@
     <!-- Login -->
     <section id="login-view" class="view">
       <div class="hero">
-        <img src="/meads-logo.png" alt="Meads Runners" class="hero-logo" onerror="this.style.display='none'" />
+        <img src="/meads-logo.png" alt="Meads Runners" class="hero-logo" />
         <h1>Meads Runners Receipt</h1>
         <p class="tagline">Connect Strava and print a receipt for any of your runs.</p>
         <button id="connect-btn" class="strava-btn">
@@ -64,7 +64,9 @@
     <div id="error-banner" class="error-banner hidden no-print"></div>
   </main>
 
-  <script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"
+          integrity="sha384-UbfRVKN3/elS1r7JcK2FhmPP+KlJ4CvYwbyYD7tH+uTkbT9bNJr9eJeQ0FoFbAgz"
+          crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <script src="/app.js"></script>
 </body>
 </html>
