@@ -1,0 +1,12 @@
+[build]
+  publish = "public"
+  functions = "netlify/functions"
+
+# Serve the SPA for the OAuth callback path
+[[redirects]]
+  from = "/callback"
+  to = "/index.html"
+  status = 200
+
+[functions]
+  node_bundler = "esbuild"

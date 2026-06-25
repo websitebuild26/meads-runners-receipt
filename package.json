@@ -1,0 +1,9 @@
+{
+  "name": "meads-runners-receipt",
+  "version": "1.0.0",
+  "description": "Strava run receipt app for Meads Runners",
+  "private": true,
+  "scripts": {
+    "dev": "netlify dev"
+  }
+}

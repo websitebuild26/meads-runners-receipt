@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Meads Runners Receipt</title>
+  <meta name="description" content="Turn your Strava runs into a printable thermal-style receipt — for Meads Runners." />
+  <meta name="theme-color" content="#f4f4f2" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Meads Receipt" />
+  <link rel="apple-touch-icon" href="/meads-logo.png" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main class="app">
+    <!-- Login -->
+    <section id="login-view" class="view">
+      <div class="hero">
+        <img src="/meads-logo.png" alt="Meads Runners" class="hero-logo" onerror="this.style.display='none'" />
+        <h1>Meads Runners Receipt</h1>
+        <p class="tagline">Connect Strava and print a receipt for any of your runs.</p>
+        <button id="connect-btn" class="strava-btn">
+          Connect with Strava
+        </button>
+        <p class="fineprint">We only read your activities. Your data never leaves your device except to talk to Strava.</p>
+      </div>
+    </section>
+
+    <!-- Loading -->
+    <section id="loading-view" class="view hidden">
+      <div class="spinner"></div>
+      <p id="loading-text">Loading your runs…</p>
+    </section>
+
+    <!-- Run list -->
+    <section id="list-view" class="view hidden">
+      <header class="bar">
+        <span id="athlete-name">Your runs</span>
+        <button id="logout-btn" class="text-btn">Log out</button>
+      </header>
+      <p class="hint">Pick a run to print its receipt.</p>
+      <ul id="run-list" class="run-list"></ul>
+      <button id="load-more-btn" class="text-btn hidden">Load more</button>
+    </section>
+
+    <!-- Receipt -->
+    <section id="receipt-view" class="view hidden">
+      <div class="receipt-actions no-print">
+        <button id="back-btn" class="text-btn">← Back</button>
+        <div class="action-group">
+          <button id="save-btn" class="strava-btn small">Save / Share</button>
+          <button id="print-btn" class="ghost-btn small">Print</button>
+        </div>
+      </div>
+      <div class="printer no-print" aria-hidden="true">
+        <div class="printer-slot"></div>
+      </div>
+      <div class="receipt-stage">
+        <div id="receipt" class="receipt"></div>
+      </div>
+    </section>
+
+    <div id="error-banner" class="error-banner hidden no-print"></div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
