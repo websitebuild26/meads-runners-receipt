@@ -59,7 +59,8 @@ body {
 .strava-btn:hover { filter: brightness(1.06); }
 .strava-btn.small { width: auto; padding: 10px 18px; font-size: .9rem; min-height: 0; }
 
-.action-group { display: flex; gap: 8px; align-items: center; }
+.receipt-actions { flex-wrap: wrap; gap: 8px; }
+.action-group { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 
 .ghost-btn {
   background: #fff;

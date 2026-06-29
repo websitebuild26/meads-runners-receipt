@@ -269,30 +269,8 @@ async function saveReceipt() {
       cacheBust: true,
     });
     if (!blob) throw new Error("empty image");
-
-    const fileName = `meads-receipt-${Date.now()}.png`;
-    const file = new File([blob], fileName, { type: "image/png" });
-
-    // Prefer the native share sheet on mobile (gives "Save Image" + Strava etc.)
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      await navigator.share({
-        files: [file],
-        title: "Meads Runners Receipt",
-        text: "My run receipt 🧾 #MeadsRunners",
-      });
-    } else {
-      // Desktop / unsupported: download the PNG.
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    }
+    await shareOrDownload(blob, `meads-receipt-${Date.now()}.png`, "Meads Runners Receipt");
   } catch (err) {
-    // User cancelling the share sheet throws AbortError — ignore that.
     if (err && err.name !== "AbortError") {
       showError("Could not create image: " + (err.message || err));
     }
@@ -300,6 +278,199 @@ async function saveReceipt() {
     btn.disabled = false;
     btn.textContent = label;
   }
+}
+
+// Share a blob via the native share sheet (mobile → "Save Image/Video" to
+// Photos + share targets), or download it as a fallback (desktop).
+async function shareOrDownload(blob, fileName, title) {
+  const file = new File([blob], fileName, { type: blob.type });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    await navigator.share({ files: [file], title, text: "My run receipt 🧾 #MeadsRunners" });
+  } else {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+}
+
+/* ---------- printing video ---------- */
+$("video-btn").addEventListener("click", saveVideo);
+
+async function saveVideo() {
+  const btn = $("video-btn");
+  if (typeof htmlToImage === "undefined") {
+    showError("Image library didn't load — check your connection and retry.");
+    return;
+  }
+  if (typeof MediaRecorder === "undefined") {
+    showError("Your browser can't record video. Try the latest Safari or Chrome.");
+    return;
+  }
+
+  const label = btn.textContent;
+  btn.disabled = true;
+
+  try {
+    const blob = await buildReceiptVideoBlob((p) => {
+      btn.textContent = "Rendering " + Math.round(p * 100) + "%";
+    });
+    if (!blob || !blob.size) throw new Error("empty video");
+    const ext = blob.type.includes("mp4") ? "mp4" : "webm";
+    await shareOrDownload(blob, `meads-receipt-${Date.now()}.${ext}`, "Meads Runners Receipt");
+  } catch (err) {
+    if (err && err.name !== "AbortError") {
+      showError("Could not create video: " + (err.message || err));
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+function pickVideoMime() {
+  const candidates = [
+    "video/mp4;codecs=h264",
+    "video/mp4",
+    "video/webm;codecs=vp9",
+    "video/webm;codecs=vp8",
+    "video/webm",
+  ];
+  for (const m of candidates) {
+    if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) return m;
+  }
+  return "";
+}
+
+function loadImage(src) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = () => rej(new Error("image decode failed"));
+    img.src = src;
+  });
+}
+
+function roundRectPath(ctx, x, y, w, h, r) {
+  if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); return; }
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// Records a short clip: paper feeds out of a printer slot, then holds on the
+// finished receipt. Returns a Promise<Blob> (mp4 where supported, else webm).
+async function buildReceiptVideoBlob(onProgress) {
+  const node = $("receipt");
+  node.classList.remove("printing");
+
+  const dataUrl = await htmlToImage.toPng(node, {
+    pixelRatio: 2,
+    backgroundColor: "#ffffff",
+    cacheBust: true,
+  });
+  const img = await loadImage(dataUrl);
+
+  // layout
+  const sidePad = 40, topPad = 30, slotH = 46, gap = 6, botPad = 54;
+  const RW = 640;
+  const RH = Math.round(RW * img.naturalHeight / img.naturalWidth);
+  const W = RW + sidePad * 2;
+  const H = topPad + slotH + gap + RH + botPad;
+  const rx = sidePad, ry = topPad + slotH + gap;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d");
+
+  function drawBg() {
+    ctx.fillStyle = "#f4f4f2";
+    ctx.fillRect(0, 0, W, H);
+  }
+  function drawReceipt(visibleH, jitter) {
+    if (visibleH <= 0) return;
+    // paper drop shadow for depth
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.18)";
+    ctx.shadowBlur = 20;
+    ctx.shadowOffsetY = 8;
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(rx, ry, RW, visibleH);
+    ctx.restore();
+    // clip to the printed-so-far region, then draw the receipt image
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rx, ry, RW, visibleH);
+    ctx.clip();
+    ctx.drawImage(img, rx + jitter, ry, RW, RH);
+    ctx.restore();
+  }
+  function drawSlot() {
+    const sx = sidePad - 12, sy = topPad, sw = RW + 24, sh = slotH;
+    const grd = ctx.createLinearGradient(0, sy, 0, sy + sh);
+    grd.addColorStop(0, "#3a3a3c");
+    grd.addColorStop(1, "#202022");
+    ctx.fillStyle = grd;
+    roundRectPath(ctx, sx, sy, sw, sh, 10);
+    ctx.fill();
+    ctx.fillStyle = "#0a0a0a";
+    roundRectPath(ctx, sx + 18, sy + sh - 13, sw - 36, 8, 4);
+    ctx.fill();
+  }
+
+  const mime = pickVideoMime();
+  const stream = canvas.captureStream(30);
+  const recorder = new MediaRecorder(
+    stream,
+    mime ? { mimeType: mime, videoBitsPerSecond: 6000000 } : undefined
+  );
+  const chunks = [];
+  recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  const finished = new Promise((res) => {
+    recorder.onstop = () => res(new Blob(chunks, { type: mime || "video/webm" }));
+  });
+
+  const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+  const preDur = 450, feedDur = 2200, holdDur = 2600;
+  const total = preDur + feedDur + holdDur;
+
+  recorder.start();
+  await new Promise((res) => {
+    const start = performance.now();
+    function frame(now) {
+      const t = now - start;
+      drawBg();
+      if (t < preDur) {
+        drawSlot();
+      } else if (t < preDur + feedDur) {
+        const p = easeOut((t - preDur) / feedDur);
+        drawReceipt(RH * p, (Math.random() * 2 - 1) * 1.2);
+        drawSlot(); // slot sits over the paper, so it appears to emerge from it
+      } else {
+        drawReceipt(RH, 0);
+        drawSlot();
+      }
+      if (onProgress) onProgress(Math.min(1, t / total));
+      if (t < total) {
+        requestAnimationFrame(frame);
+      } else {
+        recorder.stop();
+        res();
+      }
+    }
+    requestAnimationFrame(frame);
+  });
+
+  return finished;
 }
 
 /* ---------- formatting helpers ---------- */
