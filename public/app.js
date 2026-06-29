@@ -380,8 +380,8 @@ async function buildReceiptVideoBlob(onProgress) {
   const img = await loadImage(dataUrl);
 
   // layout — printer machine on top, receipt feeds out of its slot
-  const sidePad = 70, topPad = 26, botPad = 64;
-  const RW = 640;
+  const sidePad = 62, topPad = 24, botPad = 58;
+  const RW = 560;
   const RH = Math.round(RW * img.naturalHeight / img.naturalWidth);
   const W = RW + sidePad * 2;              // 780
   const machineX = 24, machineW = W - 48;  // body footprint
@@ -389,7 +389,8 @@ async function buildReceiptVideoBlob(onProgress) {
   const machineBodyH = 190;
   const slotY = machineTop + machineBodyH; // paper exit line
   const rx = sidePad, ry = slotY;
-  const H = slotY + RH + botPad;
+  let H = slotY + RH + botPad;
+  if (H % 2) H++; // H.264 needs even dimensions
 
   const canvas = document.createElement("canvas");
   canvas.width = W;
@@ -546,8 +547,91 @@ async function buildReceiptVideoBlob(onProgress) {
     ctx.restore();
   }
 
+  const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+  const preDur = 450, feedDur = 2200, holdDur = 2600;
+  const total = preDur + feedDur + holdDur;
+
+  // Draw a single frame for animation time `t` (ms).
+  function drawFrame(t) {
+    drawBg();
+    if (t < preDur) {
+      drawMachine();
+    } else if (t < preDur + feedDur) {
+      const p = easeOut((t - preDur) / feedDur);
+      drawReceipt(RH * p, (Math.random() * 2 - 1) * 1.2);
+      drawMachine(); // machine over the paper, so it appears to emerge from the slot
+    } else {
+      drawReceipt(RH, 0);
+      drawMachine();
+    }
+  }
+
+  const fps = 25;
+
+  // Preferred path: WebCodecs encodes a real MP4 frame-by-frame. Works on
+  // iOS/Safari (16.4+), where canvas.captureStream + MediaRecorder do not.
+  if (window.VideoEncoder && window.Mp4Muxer) {
+    const codec = await pickAvcCodec(W, H, fps);
+    if (codec) {
+      return encodeWithWebCodecs(canvas, drawFrame, { W, H, fps, total, codec, onProgress });
+    }
+  }
+
+  // Fallback: MediaRecorder + canvas.captureStream (Chromium / Android).
+  if (typeof canvas.captureStream === "function" && typeof MediaRecorder !== "undefined") {
+    return recordWithMediaRecorder(canvas, drawFrame, { fps, total, onProgress });
+  }
+
+  throw new Error("video recording isn't supported here — try Save image instead");
+}
+
+async function pickAvcCodec(W, H, fps) {
+  const codecs = ["avc1.420028", "avc1.640028", "avc1.4D0028", "avc1.42E01F"];
+  for (const codec of codecs) {
+    try {
+      const s = await VideoEncoder.isConfigSupported({
+        codec, width: W, height: H, bitrate: 5000000, framerate: fps,
+      });
+      if (s && s.supported) return codec;
+    } catch (_) { /* try next */ }
+  }
+  return null;
+}
+
+async function encodeWithWebCodecs(canvas, drawFrame, { W, H, fps, total, codec, onProgress }) {
+  const muxer = new Mp4Muxer.Muxer({
+    target: new Mp4Muxer.ArrayBufferTarget(),
+    video: { codec: "avc", width: W, height: H },
+    fastStart: "in-memory",
+  });
+  let encodeError = null;
+  const encoder = new VideoEncoder({
+    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+    error: (e) => { encodeError = e; },
+  });
+  encoder.configure({ codec, width: W, height: H, bitrate: 5000000, framerate: fps });
+
+  const frames = Math.round((total / 1000) * fps);
+  const frameDur = 1e6 / fps; // microseconds
+  for (let i = 0; i < frames; i++) {
+    if (encodeError) throw encodeError;
+    drawFrame((i / fps) * 1000);
+    const vf = new VideoFrame(canvas, { timestamp: Math.round(i * frameDur), duration: Math.round(frameDur) });
+    encoder.encode(vf, { keyFrame: i % (fps * 2) === 0 });
+    vf.close();
+    if (onProgress) onProgress(i / frames);
+    if (encoder.encodeQueueSize > 8) await new Promise((r) => setTimeout(r, 0));
+  }
+  await encoder.flush();
+  if (encodeError) throw encodeError;
+  muxer.finalize();
+  if (onProgress) onProgress(1);
+  return new Blob([muxer.target.buffer], { type: "video/mp4" });
+}
+
+function recordWithMediaRecorder(canvas, drawFrame, { fps, total, onProgress }) {
   const mime = pickVideoMime();
-  const stream = canvas.captureStream(30);
+  const stream = canvas.captureStream(fps);
   const recorder = new MediaRecorder(
     stream,
     mime ? { mimeType: mime, videoBitsPerSecond: 6000000 } : undefined
@@ -558,37 +642,19 @@ async function buildReceiptVideoBlob(onProgress) {
     recorder.onstop = () => res(new Blob(chunks, { type: mime || "video/webm" }));
   });
 
-  const easeOut = (t) => 1 - Math.pow(1 - t, 3);
-  const preDur = 450, feedDur = 2200, holdDur = 2600;
-  const total = preDur + feedDur + holdDur;
-
   recorder.start();
-  await new Promise((res) => {
-    const start = performance.now();
-    function frame(now) {
-      const t = now - start;
-      drawBg();
-      if (t < preDur) {
-        drawMachine();
-      } else if (t < preDur + feedDur) {
-        const p = easeOut((t - preDur) / feedDur);
-        drawReceipt(RH * p, (Math.random() * 2 - 1) * 1.2);
-        drawMachine(); // machine drawn over the paper, so it appears to emerge from the slot
-      } else {
-        drawReceipt(RH, 0);
-        drawMachine();
-      }
-      if (onProgress) onProgress(Math.min(1, t / total));
-      if (t < total) {
-        requestAnimationFrame(frame);
-      } else {
-        recorder.stop();
-        res();
-      }
+  const start = performance.now();
+  function frame(now) {
+    const t = now - start;
+    drawFrame(t);
+    if (onProgress) onProgress(Math.min(1, t / total));
+    if (t < total) {
+      requestAnimationFrame(frame);
+    } else {
+      recorder.stop();
     }
-    requestAnimationFrame(frame);
-  });
-
+  }
+  requestAnimationFrame(frame);
   return finished;
 }
 
