@@ -320,8 +320,9 @@ async function saveVideo() {
       btn.textContent = "Rendering " + Math.round(p * 100) + "%";
     });
     if (!blob || !blob.size) throw new Error("empty video");
-    const ext = blob.type.includes("mp4") ? "mp4" : "webm";
-    await shareOrDownload(blob, `meads-receipt-${Date.now()}.${ext}`, "Meads Runners Receipt");
+    // Don't auto-share: on iOS the share sheet needs a *fresh* tap, but encoding
+    // takes seconds. Show the finished clip with its own Save button instead.
+    showVideoResult(blob);
   } catch (err) {
     if (err && err.name !== "AbortError") {
       showError("Could not create video: " + (err.message || err));
@@ -330,6 +331,37 @@ async function saveVideo() {
     btn.disabled = false;
     btn.textContent = label;
   }
+}
+
+// Show the finished video so the user can save it with a fresh tap (required
+// by iOS for navigator.share) or press-and-hold the video → Save to Photos.
+function showVideoResult(blob) {
+  const url = URL.createObjectURL(blob);
+  const ext = blob.type.includes("mp4") ? "mp4" : "webm";
+  const wrap = document.createElement("div");
+  wrap.className = "video-result";
+  wrap.innerHTML =
+    '<h3>Your printing video</h3>' +
+    '<video src="' + url + '" autoplay loop muted playsinline controls></video>' +
+    '<p class="vr-hint">Tap <b>Save / Share</b>, then choose <b>Save Video</b>.<br>' +
+    'On iPhone you can also press &amp; hold the video → <b>Save to Photos</b>.</p>' +
+    '<div class="vr-actions">' +
+    '<button class="strava-btn small" id="vr-save">Save / Share</button>' +
+    '<button class="ghost-btn small" id="vr-close">Close</button>' +
+    '</div>';
+  document.body.appendChild(wrap);
+
+  wrap.querySelector("#vr-save").addEventListener("click", async () => {
+    try {
+      await shareOrDownload(blob, `meads-receipt-${Date.now()}.${ext}`, "Meads Runners Receipt");
+    } catch (err) {
+      if (err && err.name !== "AbortError") showError("Save failed: " + (err.message || err));
+    }
+  });
+  wrap.querySelector("#vr-close").addEventListener("click", () => {
+    URL.revokeObjectURL(url);
+    wrap.remove();
+  });
 }
 
 function pickVideoMime() {

@@ -283,6 +283,39 @@ body {
 }
 .r-footer { text-align: center; font-size: .72rem; color: #444; margin-top: 8px; line-height: 1.5; }
 
+/* ---------- Video result panel ---------- */
+.video-result {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px max(16px, env(safe-area-inset-left)) calc(24px + env(safe-area-inset-bottom));
+  background: rgba(18, 18, 18, 0.93);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+.video-result h3 { color: #fff; margin: 0; font-size: 1.05rem; font-weight: 700; }
+.video-result video {
+  max-width: 100%;
+  max-height: 60vh;
+  border-radius: 10px;
+  box-shadow: 0 10px 34px rgba(0,0,0,.55);
+  background: #fff;
+}
+.video-result .vr-hint {
+  color: rgba(255,255,255,.78);
+  font-size: .82rem;
+  line-height: 1.5;
+  text-align: center;
+  max-width: 320px;
+  margin: 0;
+}
+.video-result .vr-actions { display: flex; gap: 10px; }
+
 /* ---------- Error ---------- */
 .error-banner {
   position: fixed;
