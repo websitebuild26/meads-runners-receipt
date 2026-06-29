@@ -171,6 +171,29 @@ async function openReceipt(summary) {
   renderReceipt(run);
   show("receipt");
   window.scrollTo(0, 0);
+  playPrinterSound(1.9); // match the on-screen feed animation
+}
+
+// Plays the printer buzz live (best-effort; needs a prior user gesture, which
+// selecting a run provides). Never throws.
+let _audioCtx = null;
+function playPrinterSound(feedSec) {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    if (!_audioCtx) _audioCtx = new Ctx();
+    if (_audioCtx.state === "suspended") _audioCtx.resume();
+    const sr = _audioCtx.sampleRate;
+    const samples = makePrinterSamples(sr, feedSec + 0.2, 0, feedSec);
+    const buf = _audioCtx.createBuffer(1, samples.length, sr);
+    buf.copyToChannel(samples, 0);
+    const src = _audioCtx.createBufferSource();
+    src.buffer = buf;
+    const gain = _audioCtx.createGain();
+    gain.gain.value = 0.6;
+    src.connect(gain).connect(_audioCtx.destination);
+    src.start();
+  } catch (_) { /* ignore */ }
 }
 
 function renderReceipt(r) {
@@ -605,13 +628,13 @@ async function buildReceiptVideoBlob(onProgress) {
   if (window.VideoEncoder && window.Mp4Muxer) {
     const codec = await pickAvcCodec(W, H, fps);
     if (codec) {
-      return encodeWithWebCodecs(canvas, drawFrame, { W, H, fps, total, codec, onProgress });
+      return encodeWithWebCodecs(canvas, drawFrame, { W, H, fps, total, preDur, feedDur, codec, onProgress });
     }
   }
 
   // Fallback: MediaRecorder + canvas.captureStream (Chromium / Android).
   if (typeof canvas.captureStream === "function" && typeof MediaRecorder !== "undefined") {
-    return recordWithMediaRecorder(canvas, drawFrame, { fps, total, onProgress });
+    return recordWithMediaRecorder(canvas, drawFrame, { fps, total, preDur, feedDur, onProgress });
   }
 
   throw new Error("video recording isn't supported here — try Save image instead");
@@ -630,18 +653,52 @@ async function pickAvcCodec(W, H, fps) {
   return null;
 }
 
-async function encodeWithWebCodecs(canvas, drawFrame, { W, H, fps, total, codec, onProgress }) {
+async function encodeWithWebCodecs(canvas, drawFrame, { W, H, fps, total, preDur, feedDur, codec, onProgress }) {
+  const AUDIO_SR = 44100;
+  const wantAudio = !!window.AudioEncoder && await aacSupported(AUDIO_SR);
+
   const muxer = new Mp4Muxer.Muxer({
     target: new Mp4Muxer.ArrayBufferTarget(),
     video: { codec: "avc", width: W, height: H },
+    ...(wantAudio ? { audio: { codec: "aac", numberOfChannels: 1, sampleRate: AUDIO_SR } } : {}),
     fastStart: "in-memory",
   });
+
   let encodeError = null;
   const encoder = new VideoEncoder({
     output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
     error: (e) => { encodeError = e; },
   });
   encoder.configure({ codec, width: W, height: H, bitrate: 5000000, framerate: fps });
+
+  // audio: printer buzz embedded as an AAC track
+  let audioEncoder = null;
+  if (wantAudio) {
+    try {
+      audioEncoder = new AudioEncoder({
+        output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+        error: (e) => { encodeError = e; },
+      });
+      audioEncoder.configure({ codec: "mp4a.40.2", numberOfChannels: 1, sampleRate: AUDIO_SR, bitrate: 128000 });
+      const samples = makePrinterSamples(AUDIO_SR, total / 1000, preDur / 1000, (preDur + feedDur) / 1000);
+      const block = 4096;
+      for (let off = 0; off < samples.length; off += block) {
+        const len = Math.min(block, samples.length - off);
+        const ad = new AudioData({
+          format: "f32-planar",
+          sampleRate: AUDIO_SR,
+          numberOfFrames: len,
+          numberOfChannels: 1,
+          timestamp: Math.round((off / AUDIO_SR) * 1e6),
+          data: samples.slice(off, off + len),
+        });
+        audioEncoder.encode(ad);
+        ad.close();
+      }
+    } catch (_) {
+      audioEncoder = null; // fall back to silent video
+    }
+  }
 
   const frames = Math.round((total / 1000) * fps);
   const frameDur = 1e6 / fps; // microseconds
@@ -655,15 +712,75 @@ async function encodeWithWebCodecs(canvas, drawFrame, { W, H, fps, total, codec,
     if (encoder.encodeQueueSize > 8) await new Promise((r) => setTimeout(r, 0));
   }
   await encoder.flush();
+  if (audioEncoder) await audioEncoder.flush();
   if (encodeError) throw encodeError;
   muxer.finalize();
   if (onProgress) onProgress(1);
   return new Blob([muxer.target.buffer], { type: "video/mp4" });
 }
 
-function recordWithMediaRecorder(canvas, drawFrame, { fps, total, onProgress }) {
+async function aacSupported(sampleRate) {
+  try {
+    const s = await AudioEncoder.isConfigSupported({
+      codec: "mp4a.40.2", numberOfChannels: 1, sampleRate, bitrate: 128000,
+    });
+    return s && s.supported;
+  } catch (_) {
+    return false;
+  }
+}
+
+// Synthesizes a thermal-printer sound: a stepper-motor buzz/whirr during the
+// paper feed, then a short mechanical clunk. Returns mono Float32 PCM [-1,1].
+function makePrinterSamples(sampleRate, totalSec, feedStart, feedEnd) {
+  const n = Math.floor(sampleRate * totalSec);
+  const out = new Float32Array(n);
+  const edge = 0.06;
+  for (let i = 0; i < n; i++) {
+    const t = i / sampleRate;
+    let s = 0;
+    if (t >= feedStart && t <= feedEnd) {
+      const base = 108 + 6 * Math.sin(2 * Math.PI * 7 * t);          // motor pitch wobble
+      const sq = Math.sign(Math.sin(2 * Math.PI * base * t));         // stepper buzz
+      const whine = Math.sin(2 * Math.PI * (2300 + 120 * Math.sin(2 * Math.PI * 5 * t)) * t);
+      const ratchet = 0.5 + 0.5 * Math.sign(Math.sin(2 * Math.PI * 33 * t)); // step on/off
+      const noise = Math.random() * 2 - 1;
+      s = (0.5 * sq + 0.18 * whine + 0.12 * noise) * ratchet;
+      let env = 1;
+      if (t - feedStart < edge) env = (t - feedStart) / edge;
+      if (feedEnd - t < edge) env = Math.max(0, (feedEnd - t) / edge);
+      s *= env * 0.5;
+    } else if (t > feedEnd && t <= feedEnd + 0.15) {
+      const ct = t - feedEnd;
+      s = Math.sin(2 * Math.PI * 70 * ct) * Math.exp(-ct * 22) * 0.6; // clunk
+    }
+    out[i] = Math.max(-1, Math.min(1, s));
+  }
+  return out;
+}
+
+function recordWithMediaRecorder(canvas, drawFrame, { fps, total, preDur, feedDur, onProgress }) {
   const mime = pickVideoMime();
   const stream = canvas.captureStream(fps);
+
+  // mix in the printer sound via WebAudio
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (Ctx) {
+      const actx = new Ctx();
+      const sr = actx.sampleRate;
+      const samples = makePrinterSamples(sr, total / 1000, preDur / 1000, (preDur + feedDur) / 1000);
+      const buf = actx.createBuffer(1, samples.length, sr);
+      buf.copyToChannel(samples, 0);
+      const src = actx.createBufferSource();
+      src.buffer = buf;
+      const dest = actx.createMediaStreamDestination();
+      src.connect(dest);
+      stream.addTrack(dest.stream.getAudioTracks()[0]);
+      src.start();
+    }
+  } catch (_) { /* silent video is fine */ }
+
   const recorder = new MediaRecorder(
     stream,
     mime ? { mimeType: mime, videoBitsPerSecond: 6000000 } : undefined
