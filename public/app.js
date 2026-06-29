@@ -379,13 +379,17 @@ async function buildReceiptVideoBlob(onProgress) {
   });
   const img = await loadImage(dataUrl);
 
-  // layout
-  const sidePad = 40, topPad = 30, slotH = 46, gap = 6, botPad = 54;
+  // layout — printer machine on top, receipt feeds out of its slot
+  const sidePad = 70, topPad = 26, botPad = 64;
   const RW = 640;
   const RH = Math.round(RW * img.naturalHeight / img.naturalWidth);
-  const W = RW + sidePad * 2;
-  const H = topPad + slotH + gap + RH + botPad;
-  const rx = sidePad, ry = topPad + slotH + gap;
+  const W = RW + sidePad * 2;              // 780
+  const machineX = 24, machineW = W - 48;  // body footprint
+  const machineTop = topPad;
+  const machineBodyH = 190;
+  const slotY = machineTop + machineBodyH; // paper exit line
+  const rx = sidePad, ry = slotY;
+  const H = slotY + RH + botPad;
 
   const canvas = document.createElement("canvas");
   canvas.width = W;
@@ -393,9 +397,13 @@ async function buildReceiptVideoBlob(onProgress) {
   const ctx = canvas.getContext("2d");
 
   function drawBg() {
-    ctx.fillStyle = "#f4f4f2";
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, "#eceae7");
+    g.addColorStop(1, "#f6f5f3");
+    ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
   }
+
   function drawReceipt(visibleH, jitter) {
     if (visibleH <= 0) return;
     // paper drop shadow for depth
@@ -412,19 +420,130 @@ async function buildReceiptVideoBlob(onProgress) {
     ctx.rect(rx, ry, RW, visibleH);
     ctx.clip();
     ctx.drawImage(img, rx + jitter, ry, RW, RH);
+    // soft shadow at the very top so the paper looks like it emerges from inside
+    const sh = ctx.createLinearGradient(0, ry, 0, ry + 46);
+    sh.addColorStop(0, "rgba(0,0,0,0.22)");
+    sh.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = sh;
+    ctx.fillRect(rx, ry, RW, 46);
     ctx.restore();
   }
-  function drawSlot() {
-    const sx = sidePad - 12, sy = topPad, sw = RW + 24, sh = slotH;
-    const grd = ctx.createLinearGradient(0, sy, 0, sy + sh);
-    grd.addColorStop(0, "#3a3a3c");
-    grd.addColorStop(1, "#202022");
-    ctx.fillStyle = grd;
-    roundRectPath(ctx, sx, sy, sw, sh, 10);
+
+  // Realistic thermal-printer body with a serrated tear bar at the exit slot.
+  function drawMachine() {
+    const mx = machineX, my = machineTop, mw = machineW, mh = machineBodyH;
+
+    // ground shadow under the machine
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.25)";
+    ctx.shadowBlur = 26;
+    ctx.shadowOffsetY = 12;
+    ctx.fillStyle = "#3a3d40";
+    roundRectPath(ctx, mx, my, mw, mh, 22);
     ctx.fill();
-    ctx.fillStyle = "#0a0a0a";
-    roundRectPath(ctx, sx + 18, sy + sh - 13, sw - 36, 8, 4);
+    ctx.restore();
+
+    // body + inner detailing (clipped to body)
+    ctx.save();
+    roundRectPath(ctx, mx, my, mw, mh, 22);
+    const body = ctx.createLinearGradient(0, my, 0, my + mh);
+    body.addColorStop(0, "#5c6065");
+    body.addColorStop(0.5, "#43474b");
+    body.addColorStop(1, "#2a2c2e");
+    ctx.fillStyle = body;
     ctx.fill();
+    ctx.clip();
+
+    // top gloss
+    const gloss = ctx.createLinearGradient(0, my, 0, my + mh * 0.45);
+    gloss.addColorStop(0, "rgba(255,255,255,0.18)");
+    gloss.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = gloss;
+    ctx.fillRect(mx, my, mw, mh * 0.45);
+
+    // side vignette for a rounded feel
+    const vig = ctx.createLinearGradient(mx, 0, mx + mw, 0);
+    vig.addColorStop(0, "rgba(0,0,0,0.30)");
+    vig.addColorStop(0.12, "rgba(0,0,0,0)");
+    vig.addColorStop(0.88, "rgba(0,0,0,0)");
+    vig.addColorStop(1, "rgba(0,0,0,0.30)");
+    ctx.fillStyle = vig;
+    ctx.fillRect(mx, my, mw, mh);
+
+    // lid seam line
+    const seamY = my + mh * 0.42;
+    ctx.strokeStyle = "rgba(0,0,0,0.38)";
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(mx, seamY); ctx.lineTo(mx + mw, seamY); ctx.stroke();
+    ctx.strokeStyle = "rgba(255,255,255,0.10)";
+    ctx.beginPath(); ctx.moveTo(mx, seamY + 2); ctx.lineTo(mx + mw, seamY + 2); ctx.stroke();
+    ctx.restore();
+
+    // embossed brand label
+    ctx.save();
+    ctx.font = "600 22px -apple-system, Helvetica, Arial, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.fillText("MEADS RUNNERS", W / 2, my + mh * 0.24);
+    ctx.restore();
+
+    // power LED (green, glowing)
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(mx + 28, my + mh - 26, 6, 0, Math.PI * 2);
+    ctx.fillStyle = "#37d67a";
+    ctx.shadowColor = "#37d67a";
+    ctx.shadowBlur = 12;
+    ctx.fill();
+    ctx.restore();
+
+    // feed button (right)
+    ctx.save();
+    const bgrd = ctx.createLinearGradient(0, my + mh - 40, 0, my + mh - 14);
+    bgrd.addColorStop(0, "#6b6f73");
+    bgrd.addColorStop(1, "#34383b");
+    ctx.beginPath();
+    ctx.arc(mx + mw - 36, my + mh - 28, 13, 0, Math.PI * 2);
+    ctx.fillStyle = bgrd;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,0.4)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.restore();
+
+    // recessed exit slot just inside the bottom edge
+    const slotInset = 26, sH = 16;
+    const sX = mx + slotInset, sW = mw - slotInset * 2, sY = slotY - sH;
+    ctx.save();
+    const slotG = ctx.createLinearGradient(0, sY, 0, sY + sH);
+    slotG.addColorStop(0, "rgba(0,0,0,0.92)");
+    slotG.addColorStop(1, "rgba(35,35,38,0.7)");
+    ctx.fillStyle = slotG;
+    roundRectPath(ctx, sX, sY, sW, sH, 6);
+    ctx.fill();
+    ctx.restore();
+
+    // metallic serrated tear bar at the slot line
+    ctx.save();
+    const bar = ctx.createLinearGradient(0, slotY - 6, 0, slotY + 2);
+    bar.addColorStop(0, "#d3d6d8");
+    bar.addColorStop(0.5, "#9a9ea1");
+    bar.addColorStop(1, "#707477");
+    ctx.fillStyle = bar;
+    ctx.fillRect(sX, slotY - 6, sW, 6);
+    ctx.fillStyle = "#bcbfc1";
+    const tw = 10, n = Math.floor(sW / tw);
+    for (let i = 0; i < n; i++) {
+      const tx = sX + i * tw;
+      ctx.beginPath();
+      ctx.moveTo(tx, slotY);
+      ctx.lineTo(tx + tw / 2, slotY + 7);
+      ctx.lineTo(tx + tw, slotY);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   const mime = pickVideoMime();
@@ -450,14 +569,14 @@ async function buildReceiptVideoBlob(onProgress) {
       const t = now - start;
       drawBg();
       if (t < preDur) {
-        drawSlot();
+        drawMachine();
       } else if (t < preDur + feedDur) {
         const p = easeOut((t - preDur) / feedDur);
         drawReceipt(RH * p, (Math.random() * 2 - 1) * 1.2);
-        drawSlot(); // slot sits over the paper, so it appears to emerge from it
+        drawMachine(); // machine drawn over the paper, so it appears to emerge from the slot
       } else {
         drawReceipt(RH, 0);
-        drawSlot();
+        drawMachine();
       }
       if (onProgress) onProgress(Math.min(1, t / total));
       if (t < total) {
